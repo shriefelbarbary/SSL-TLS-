@@ -37,7 +37,7 @@ def get_ssl_certificate_details(url):
     except Exception as e:
         return {"error": f"Unable to retrieve SSL/TLS certificate details - {str(e)}"}
 
-@app.route('/ssl', methods=['POST'])
+@app.route('/ssl', methods=['GET', 'POST'])
 def ssl_certificate_api():
     try:
         # Extract the JSON data from the request
