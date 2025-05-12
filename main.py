@@ -1,41 +1,63 @@
 from flask import Flask, request, jsonify
-from flask_cors import CORS  # Import CORS
-import whois
-
-app = Flask(__name__)
-CORS(app)  # Allow CORS for all routes
-
-@app.route('/whois', methods=['POST'])
-def whois_lookup():
-    try:
-        data = request.get_json()
-        domain = data.get("domain")
-
-        if not domain:
-            return jsonify({"error": "Domain name is required"}), 400
-
-        domain_info = whois.whois(domain)
-
-        if not domain_info:
-            return jsonify({"error": "WHOIS data not available"}), 404
-
-        response = {
-            "domain_name": domain_info.domain_name,
-            "registrar": domain_info.registrar,
-            "creation_date": str(domain_info.creation_date),
-            "expiration_date": str(domain_info.expiration_date),
-            "updated_date": str(domain_info.updated_date),
-            "name_servers": domain_info.name_servers,
-            "status": domain_info.status,
-            "owner": domain_info.org
-        }
-        return jsonify(response)
-
-    except Exception as e:
-        return jsonify({"error": f"Unable to perform WHOIS lookup: {str(e)}"}), 500
-
+from flask_cors import CORS
+import socket
+import ssl
+from urllib.parse import urlparse
 import os
 
+app = Flask(__name__)
+CORS(app)
+
+def get_ssl_certificate_details(url):
+    try:
+        # Parse the URL to extract hostname
+        parsed_url = urlparse(url)
+        hostname = parsed_url.netloc if parsed_url.netloc else parsed_url.path
+
+        # Connect to the server and retrieve the certificate
+        context = ssl.create_default_context()
+        with socket.create_connection((hostname, 443)) as sock:
+            with context.wrap_socket(sock, server_hostname=hostname) as ssock:
+                cert = ssock.getpeercert()
+
+        # Extract relevant details
+        subject = dict(x[0] for x in cert['subject'])
+        issued_to = subject.get('commonName', 'Unknown')
+        issuer = dict(x[0] for x in cert['issuer']).get('commonName', 'Unknown')
+        valid_from = cert.get('notBefore', 'Unknown')
+        valid_to = cert.get('notAfter', 'Unknown')
+
+        return {
+            'IssuedTo': issued_to,
+            'Issuer': issuer,
+            'ValidFrom': valid_from,
+            'ValidTo': valid_to,
+        }
+
+    except Exception as e:
+        return {"error": f"Unable to retrieve SSL/TLS certificate details - {str(e)}"}
+
+@app.route('/ssl', methods=['POST'])
+def ssl_certificate_api():
+    try:
+        # Extract the JSON data from the request
+        data = request.get_json()
+        if not data or 'url' not in data:
+            return jsonify({"error": "Invalid request. 'url' is required."}), 400
+
+        url = data['url'].strip()
+        if not url.startswith("https://"):
+            url = "https://" + url  # Ensure it's HTTPS for SSL
+
+        # Get SSL certificate details
+        cert_details = get_ssl_certificate_details(url)
+
+        # Return the certificate details as JSON
+        return jsonify(cert_details), 200
+
+    except Exception as e:
+        return jsonify({"error": f"An unexpected error occurred: {str(e)}"}), 500
+
 if __name__ == "__main__":
-    port = int(os.environ.get("PORT", 8000))
+    port = int(os.environ.get('PORT', 8000))  # Railway uses a dynamic port
     app.run(host="0.0.0.0", port=port)
